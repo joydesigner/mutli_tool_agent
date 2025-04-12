@@ -86,12 +86,17 @@ class TravelCoordinator:
         self.workflow = SequentialAgent(
             name="TravelWorkflow",
             sub_agents=[
-                # Phase 1: Parallel Data Collection
-                ParallelAgent(
-                    name="DataCollection",
+                # Phase 1: Data Collection (runs once)
+                SequentialAgent(
+                    name="InitialDataCollection",
                     sub_agents=[
-                        self.flight_finder,    # Output stored in STATE_FLIGHT_OPTIONS
-                        self.hotel_booker,     # Output stored in STATE_HOTEL_OPTIONS
+                        ParallelAgent(
+                            name="DataCollection",
+                            sub_agents=[
+                                self.flight_finder,    # Output stored in STATE_FLIGHT_OPTIONS
+                                self.hotel_booker,     # Output stored in STATE_HOTEL_OPTIONS
+                            ]
+                        )
                     ]
                 ),
                 # Phase 2: Iterative Planning with timeout
@@ -101,11 +106,7 @@ class TravelCoordinator:
                         self.itinerary_designer,  # Output stored in STATE_ITINERARY
                         self.budget_checker       # Output stored in STATE_BUDGET_ANALYSIS
                     ],
-                    max_iterations=MAX_ITERATIONS,
-                    condition=lambda state: (
-                        not self.stop_flag.is_set() and  # Check if stop was requested
-                        not state.get(STATE_BUDGET_ANALYSIS, {}).get("within_budget", True)
-                    )
+                    max_iterations=MAX_ITERATIONS
                 ),
                 # Phase 3: Final Approval
                 self.human_approval    # Output stored in STATE_APPROVAL_STATUS
@@ -130,6 +131,9 @@ class TravelCoordinator:
             name="flight_finder",
             model=LiteLlm(model=OLLAMA_MODEL),
             instruction=f"""Find and compare flight options based on origin, destination, and dates.
+            First check if flight options already exist in state key '{STATE_FLIGHT_OPTIONS}'.
+            If they exist, return those options.
+            If not, search for new flight options.
             Consider price, duration, and layovers.
             Return flight options in a structured format.
             """,
@@ -142,6 +146,9 @@ class TravelCoordinator:
             name="hotel_booker",
             model=LiteLlm(model=OLLAMA_MODEL),
             instruction=f"""Find and compare hotel options based on location, dates, and budget.
+            First check if hotel options already exist in state key '{STATE_HOTEL_OPTIONS}'.
+            If they exist, return those options.
+            If not, search for new hotel options.
             Consider amenities, ratings, and location.
             Return hotel options in a structured format.
             """,
