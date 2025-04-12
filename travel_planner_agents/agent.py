@@ -74,44 +74,65 @@ class TravelCoordinator:
         self.create_itinerary = FunctionTool(func=self._create_itinerary)
         self.check_budget = FunctionTool(func=self._check_budget)
         self.request_human_approval = FunctionTool(func=self._request_human_approval)
+        self.check_flight_options = FunctionTool(func=self._check_flight_options)
 
         # Create specialized agents with direct tools
-        self.flight_finder = self._create_flight_finder()
-        self.hotel_booker = self._create_hotel_booker()
-        self.itinerary_designer = self._create_itinerary_designer()
-        self.budget_checker = self._create_budget_checker()
-        self.human_approval = self._create_human_approval_tool()
+        self.flight_finder_agent = self._create_flight_finder()
+        self.hotel_booker_agent = self._create_hotel_booker()
+        self.itinerary_designer_agent = self._create_itinerary_designer()
+        self.budget_checker_agent = self._create_budget_checker()
+        self.human_approval_agent = self._create_human_approval_tool()
 
         # Create the workflow
-        self.workflow = SequentialAgent(
+        self.workflow1 = SequentialAgent(
             name="TravelWorkflow",
             sub_agents=[
-                # Phase 1: Data Collection (runs once)
-                SequentialAgent(
-                    name="InitialDataCollection",
-                    sub_agents=[
-                        ParallelAgent(
-                            name="DataCollection",
-                            sub_agents=[
-                                self.flight_finder,    # Output stored in STATE_FLIGHT_OPTIONS
-                                self.hotel_booker,     # Output stored in STATE_HOTEL_OPTIONS
-                            ]
-                        )
-                    ]
-                ),
-                # Phase 2: Iterative Planning with timeout
-                LoopAgent(
-                    name="PlanningRefinement",
-                    sub_agents=[
-                        self.itinerary_designer,  # Output stored in STATE_ITINERARY
-                        self.budget_checker       # Output stored in STATE_BUDGET_ANALYSIS
-                    ],
-                    max_iterations=MAX_ITERATIONS
-                ),
-                # Phase 3: Final Approval
-                self.human_approval    # Output stored in STATE_APPROVAL_STATUS
+                self.flight_finder_agent,
+                self.hotel_booker_agent,
+                self.itinerary_designer_agent,
+                self.budget_checker_agent,
+                self.human_approval_agent
             ]
         )
+        # self.workflow = SequentialAgent(
+        #     name="TravelWorkflow",
+        #     sub_agents=[
+        #         # Phase 1: Data Collection (runs once)
+        #         SequentialAgent(
+        #             name="InitialDataCollection",
+        #             sub_agents=[
+        #                 ParallelAgent(
+        #                     name="DataCollection",
+        #                     sub_agents=[
+        #                         self.flight_finder_agent,    # Output stored in STATE_FLIGHT_OPTIONS
+        #                         self.hotel_booker_agent,     # Output stored in STATE_HOTEL_OPTIONS
+        #                     ]
+        #                 )
+        #             ]
+        #         ),
+        #         # Phase 2: Iterative Planning with timeout
+        #         SequentialAgent(
+        #             name="PlanningPhase",
+        #             sub_agents=[
+        #                 LoopAgent(
+        #                     name="PlanningRefinement",
+        #                     sub_agents=[
+        #                         self.itinerary_designer_agent,  # Output stored in STATE_ITINERARY
+        #                         self.budget_checker_agent       # Output stored in STATE_BUDGET_ANALYSIS
+        #                     ],
+        #                     max_iterations=MAX_ITERATIONS
+        #                 )
+        #             ]
+        #         ),
+        #         # Phase 3: Final Approval
+        #         SequentialAgent(
+        #             name="ApprovalPhase",
+        #             sub_agents=[
+        #                 self.human_approval_agent    # Output stored in STATE_APPROVAL_STATUS
+        #             ]
+        #         )
+        #     ]
+        # )
 
         # Initialize session service and runner
         self.session_service = InMemorySessionService()
@@ -137,7 +158,7 @@ class TravelCoordinator:
             Consider price, duration, and layovers.
             Return flight options in a structured format.
             """,
-            tools=[self.search_flights],
+            tools=[self.search_flights, self.check_flight_options],
             output_key=STATE_FLIGHT_OPTIONS
         )
 
@@ -436,6 +457,20 @@ class TravelCoordinator:
                 }
             ],
             "requires_human_approval": True
+        }
+
+    def _check_flight_options(self, flight_options: Dict[str, Any]) -> Dict[str, Any]:
+        """Check if flight options exist and are valid"""
+        logger.info("Checking flight options")
+        if not flight_options or not flight_options.get("flights"):
+            return {
+                "status": "error",
+                "message": "No flight options available"
+            }
+        return {
+            "status": "success",
+            "message": "Flight options are valid",
+            "options": flight_options
         }
 
 # Create the main coordinator instance
