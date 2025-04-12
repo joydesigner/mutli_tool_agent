@@ -74,7 +74,7 @@ class TravelCoordinator:
         self.create_itinerary = FunctionTool(func=self._create_itinerary)
         self.check_budget = FunctionTool(func=self._check_budget)
         self.request_human_approval = FunctionTool(func=self._request_human_approval)
-        self.check_flight_options = FunctionTool(func=self._check_flight_options)
+        # self.check_flight_options = FunctionTool(func=self._check_flight_options)
 
         # Create specialized agents with direct tools
         self.flight_finder_agent = self._create_flight_finder()
@@ -84,7 +84,7 @@ class TravelCoordinator:
         self.human_approval_agent = self._create_human_approval_tool()
 
         # Create the workflow
-        self.workflow1 = SequentialAgent(
+        self.workflow = SequentialAgent(
             name="TravelWorkflow",
             sub_agents=[
                 self.flight_finder_agent,
@@ -152,13 +152,8 @@ class TravelCoordinator:
             name="flight_finder",
             model=LiteLlm(model=OLLAMA_MODEL),
             instruction=f"""Find and compare flight options based on origin, destination, and dates.
-            First check if flight options already exist in state key '{STATE_FLIGHT_OPTIONS}'.
-            If they exist, return those options.
-            If not, search for new flight options.
-            Consider price, duration, and layovers.
-            Return flight options in a structured format.
             """,
-            tools=[self.search_flights, self.check_flight_options],
+            tools=[self.search_flights],
             output_key=STATE_FLIGHT_OPTIONS
         )
 
@@ -167,9 +162,6 @@ class TravelCoordinator:
             name="hotel_booker",
             model=LiteLlm(model=OLLAMA_MODEL),
             instruction=f"""Find and compare hotel options based on location, dates, and budget.
-            First check if hotel options already exist in state key '{STATE_HOTEL_OPTIONS}'.
-            If they exist, return those options.
-            If not, search for new hotel options.
             Consider amenities, ratings, and location.
             Return hotel options in a structured format.
             """,
@@ -310,9 +302,15 @@ class TravelCoordinator:
 
     # Tool implementations
     def _search_flights(self, origin: str, destination: str, dates: Dict[str, str]) -> Dict[str, Any]:
-        """Mock implementation for flight search"""
         logger.info(f"Searching flights from {origin} to {destination} for dates {dates}")
-        return {
+        
+        # First check if we already have valid options
+        # check_result = self._check_flight_options()
+        # if check_result["status"] == "success" and not check_result["should_search"]:
+        #     return check_result["options"]
+            
+        # If we need to search, perform the search
+        flight_options = {
             "status": "success",
             "flights": [
                 {
@@ -323,18 +321,13 @@ class TravelCoordinator:
                     "departure": "2024-05-01T08:00:00",
                     "arrival": "2024-05-01T20:00:00",
                     "class": "economy"
-                },
-                {
-                    "airline": "Another Airline",
-                    "price": 450,
-                    "duration": "10h",
-                    "stops": 0,
-                    "departure": "2024-05-01T09:00:00",
-                    "arrival": "2024-05-01T19:00:00",
-                    "class": "economy"
                 }
             ]
         }
+        
+        # Store in state
+        # self.session.state[STATE_FLIGHT_OPTIONS] = flight_options
+        return flight_options
 
     def _search_hotels(self, location: str, dates: Dict[str, str], budget: float) -> Dict[str, Any]:
         """Mock implementation for hotel search"""
@@ -459,18 +452,41 @@ class TravelCoordinator:
             "requires_human_approval": True
         }
 
-    def _check_flight_options(self, flight_options: Dict[str, Any]) -> Dict[str, Any]:
+    def _check_flight_options(self) -> Dict[str, Any]:
         """Check if flight options exist and are valid"""
         logger.info("Checking flight options")
-        if not flight_options or not flight_options.get("flights"):
+        
+        # Get from state
+        flight_options = self.session.state.get(STATE_FLIGHT_OPTIONS, {})
+        
+        # Check if we've exceeded the maximum number of checks
+        check_count = self.session.state.get("flight_check_count", 0)
+        if check_count >= 3:
+            logger.error("Too many flight option checks - stopping workflow")
+            self.stop_workflow()
             return {
                 "status": "error",
-                "message": "No flight options available"
+                "message": "Too many flight option checks - workflow stopped",
+                "should_search": False
             }
+        
+        # Increment the check counter
+        self.session.state["flight_check_count"] = check_count + 1
+        
+        if not flight_options or not flight_options.get("flights"):
+            logger.info("No flight options found, should search for new flights")
+            return {
+                "status": "error",
+                "message": "No flight options available",
+                "should_search": True  # Signal that we need to search for flights
+            }
+        
+        logger.info("Found existing flight options")
         return {
             "status": "success",
             "message": "Flight options are valid",
-            "options": flight_options
+            "options": flight_options,
+            "should_search": False  # Signal that we don't need to search
         }
 
 # Create the main coordinator instance
