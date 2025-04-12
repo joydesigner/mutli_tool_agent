@@ -107,10 +107,6 @@ weather_time_agent = LlmAgent(
     name="WeatherTimeAgent",
     model=LiteLlm(model=OLLAMA_MODEL),
     instruction="""You are a Weather and Time AI. You can check the weather and time for the destination city from the state key 'confirmation_message'.
-    You will check the weather for the destination city on the given date the user wants to travel.
-    You will also check the current time in the destination city.
-    You will check the weather for the destination city on the given date the assitant has provided.
-    You will also check the current time in the destination city.   
     """,
     description="Weather and Time AI, can check the weather and time for the destination city.",
     tools=[get_weather, get_current_time],
@@ -123,7 +119,7 @@ flight_finder_agent = LlmAgent(
     name="FlightFinderAgent",
     model=LiteLlm(model=OLLAMA_MODEL),
     instruction="""You are a Flight Finder AI.
-    Based on the user's request, find the flights.
+    Based on the user's request, find the flights for the start date and end date from the state key 'confirmation_message'.
     Output *only* the flight options.
     """,
     description="Flight Finder AI, finds the flights based on the user's request.",
