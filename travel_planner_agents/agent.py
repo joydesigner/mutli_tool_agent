@@ -194,31 +194,191 @@ class TravelCoordinator:
 
     # Tool implementations
     def _search_flights(self, origin: str, destination: str, dates: Dict[str, str]) -> Dict[str, Any]:
-        # Implementation for flight search
-        pass
+        """Mock implementation for flight search"""
+        logger.info(f"Searching flights from {origin} to {destination} for dates {dates}")
+        return {
+            "status": "success",
+            "flights": [
+                {
+                    "airline": "Sample Airline",
+                    "price": 500,
+                    "duration": "12h",
+                    "stops": 1,
+                    "departure": "2024-05-01T08:00:00",
+                    "arrival": "2024-05-01T20:00:00",
+                    "class": "economy"
+                },
+                {
+                    "airline": "Another Airline",
+                    "price": 450,
+                    "duration": "10h",
+                    "stops": 0,
+                    "departure": "2024-05-01T09:00:00",
+                    "arrival": "2024-05-01T19:00:00",
+                    "class": "economy"
+                }
+            ]
+        }
 
     def _search_hotels(self, location: str, dates: Dict[str, str], budget: float) -> Dict[str, Any]:
-        # Implementation for hotel search
-        pass
+        """Mock implementation for hotel search"""
+        logger.info(f"Searching hotels in {location} for dates {dates} with budget {budget}")
+        return {
+            "status": "success",
+            "hotels": [
+                {
+                    "name": "Sample Hotel",
+                    "price": 200,
+                    "rating": 4.5,
+                    "amenities": ["pool", "gym", "free Wi-Fi"],
+                    "location": "Shinjuku, Tokyo",
+                    "check_in": "2024-05-01",
+                    "check_out": "2024-05-07"
+                },
+                {
+                    "name": "Luxury Hotel",
+                    "price": 350,
+                    "rating": 5.0,
+                    "amenities": ["spa", "restaurant", "bar"],
+                    "location": "Shibuya, Tokyo",
+                    "check_in": "2024-05-01",
+                    "check_out": "2024-05-07"
+                }
+            ]
+        }
 
     def _create_itinerary(self, flight_options: Dict[str, Any], hotel_options: Dict[str, Any], 
                          preferences: Dict[str, Any]) -> Dict[str, Any]:
-        # Implementation for itinerary creation
-        pass
+        """Mock implementation for itinerary creation"""
+        logger.info("Creating itinerary based on flight and hotel options")
+        return {
+            "status": "success",
+            "itinerary": {
+                "day_1": {
+                    "activities": [
+                        {
+                            "time": "09:00",
+                            "activity": "Visit Senso-ji Temple",
+                            "duration": "2h",
+                            "cost": 0
+                        },
+                        {
+                            "time": "12:00",
+                            "activity": "Lunch at a local sushi restaurant",
+                            "duration": "1.5h",
+                            "cost": 50
+                        },
+                        {
+                            "time": "14:00",
+                            "activity": "Explore Akihabara",
+                            "duration": "3h",
+                            "cost": 100
+                        }
+                    ]
+                },
+                "day_2": {
+                    "activities": [
+                        {
+                            "time": "10:00",
+                            "activity": "Shopping in Shibuya",
+                            "duration": "3h",
+                            "cost": 200
+                        },
+                        {
+                            "time": "13:00",
+                            "activity": "Visit Meiji Shrine",
+                            "duration": "2h",
+                            "cost": 0
+                        },
+                        {
+                            "time": "15:00",
+                            "activity": "Relax at Yoyogi Park",
+                            "duration": "2h",
+                            "cost": 0
+                        }
+                    ]
+                }
+            }
+        }
 
     def _check_budget(self, flight_cost: float, hotel_cost: float, 
                      activity_costs: List[float], total_budget: float) -> Dict[str, Any]:
-        # Implementation for budget checking
-        pass
+        """Mock implementation for budget checking"""
+        logger.info(f"Checking budget with flight cost: {flight_cost}, hotel cost: {hotel_cost}, activity costs: {activity_costs}, total budget: {total_budget}")
+        total_cost = flight_cost + hotel_cost + sum(activity_costs)
+        return {
+            "status": "success",
+            "within_budget": total_cost <= total_budget,
+            "total_cost": total_cost,
+            "breakdown": {
+                "flights": flight_cost,
+                "hotel": hotel_cost,
+                "activities": sum(activity_costs)
+            },
+            "suggestions": [
+                "Consider a cheaper hotel option",
+                "Reduce shopping budget",
+                "Look for flight deals"
+            ] if total_cost > total_budget else []
+        }
 
     def _request_human_approval(self, budget_analysis: Dict[str, Any], 
                               itinerary: Dict[str, Any]) -> Dict[str, Any]:
-        # Implementation for human approval
-        pass
+        """Mock implementation for human approval"""
+        logger.info("Requesting human approval for budget overrun")
+        return {
+            "status": "pending",
+            "approved": False,
+            "reason": "Budget exceeds the initial estimate",
+            "options": [
+                {
+                    "option": "Reduce hotel budget",
+                    "suggested_price": 150
+                },
+                {
+                    "option": "Choose a cheaper flight",
+                    "suggested_price": 400
+                }
+            ],
+            "requires_human_approval": True
+        }
 
     def plan_trip(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute the travel planning workflow."""
-        return self.workflow.run(request)
+        """Execute the travel planning workflow with mock data"""
+        logger.info(f"Planning trip with request: {request}")
+        
+        # Convert request to ADK content format
+        content = types.Content(
+            role='user',
+            parts=[types.Part(text=json.dumps(request))]
+        )
+
+        # Execute the workflow with retry logic
+        for attempt in range(MAX_RETRIES):
+            try:
+                events = self.runner.run(
+                    user_id=USER_ID,
+                    session_id=SESSION_ID,
+                    new_message=content
+                )
+
+                # Process events and return final response
+                for event in events:
+                    if event.is_final_response():
+                        return json.loads(event.content.parts[0].text)
+
+                return {"status": "error", "message": "No final response received"}
+
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt < MAX_RETRIES - 1:
+                    logger.info(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Failed after {MAX_RETRIES} attempts: {str(e)}"
+                    }
 
 # Create the main coordinator instance
 travel_coordinator = TravelCoordinator()
