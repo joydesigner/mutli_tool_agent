@@ -26,6 +26,14 @@ WEATHER_API_URL = os.getenv("WEATHER_API_URL")
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
 
+# Constants for state keys
+STATE_FLIGHT_OPTIONS = "flight_options"
+STATE_HOTEL_OPTIONS = "hotel_options"
+STATE_WEATHER_FORECAST = "weather_forecast"
+STATE_ITINERARY = "itinerary"
+STATE_BUDGET_ANALYSIS = "budget_analysis"
+STATE_APPROVAL_STATUS = "approval_status"
+
 class TravelCoordinator:
     def __init__(self):
         # Create tool agents first
@@ -52,27 +60,26 @@ class TravelCoordinator:
                 ParallelAgent(
                     name="DataCollection",
                     sub_agents=[
-                        self.flight_finder,
-                        self.hotel_booker,
-                        self.weather_fetcher
-                    ],
-                    max_concurrent=3
+                        self.flight_finder,    # Output stored in STATE_FLIGHT_OPTIONS
+                        self.hotel_booker,     # Output stored in STATE_HOTEL_OPTIONS
+                        self.weather_fetcher   # Output stored in STATE_WEATHER_FORECAST
+                    ]
                 ),
                 # Phase 2: Iterative Planning
                 LoopAgent(
                     name="PlanningRefinement",
                     sub_agents=[
-                        self.itinerary_designer,
-                        self.budget_checker
+                        self.itinerary_designer,  # Output stored in STATE_ITINERARY
+                        self.budget_checker       # Output stored in STATE_BUDGET_ANALYSIS
                     ],
                     max_iterations=3,
-                    condition=lambda x: not x.get("within_budget", True)
+                    # condition=lambda state: not state.get(STATE_BUDGET_ANALYSIS, {}).get("within_budget", True)
                 ),
                 # Phase 3: Final Approval
                 SequentialAgent(
                     name="ApprovalProcess",
                     sub_agents=[
-                        self.human_approval
+                        self.human_approval  # Output stored in STATE_APPROVAL_STATUS
                     ]
                 )
             ]
@@ -160,6 +167,7 @@ class TravelCoordinator:
             Return flight options in a structured format.
             """,
             tools=[AgentTool(agent=self.search_flights_agent)],
+            output_key=STATE_FLIGHT_OPTIONS  # Store results in state
         )
 
     def _create_hotel_booker(self) -> Agent:
@@ -171,6 +179,7 @@ class TravelCoordinator:
             Return hotel options in a structured format.
             """,
             tools=[AgentTool(agent=self.search_hotels_agent)],
+            output_key=STATE_HOTEL_OPTIONS  # Store results in state
         )
 
     def _create_weather_fetcher(self) -> Agent:
@@ -182,39 +191,56 @@ class TravelCoordinator:
             Return weather information in a structured format.
             """,
             tools=[AgentTool(agent=self.get_weather_agent)],
+            output_key=STATE_WEATHER_FORECAST  # Store results in state
         )
 
     def _create_itinerary_designer(self) -> Agent:
         return Agent(
             name="itinerary_designer",
             model=GEMINI_MODEL,
-            instruction="""Design a detailed daily itinerary based on available activities,
+            instruction=f"""Design a detailed daily itinerary based on available activities,
             weather conditions, and user preferences.
+            Use the following data from state:
+            - {STATE_FLIGHT_OPTIONS}: Available flights
+            - {STATE_HOTEL_OPTIONS}: Available hotels
+            - {STATE_WEATHER_FORECAST}: Weather information
             Return a structured daily schedule in JSON format.
             """,
             tools=[AgentTool(agent=self.create_itinerary_agent)],
+            output_key=STATE_ITINERARY  # Store results in state
         )
 
     def _create_budget_checker(self) -> Agent:
         return Agent(
             name="budget_checker",
             model=GEMINI_MODEL,
-            instruction="""Verify if the total cost of the trip is within budget.
+            instruction=f"""Verify if the total cost of the trip is within budget.
+            Use the following data from state:
+            - {STATE_FLIGHT_OPTIONS}: Flight costs
+            - {STATE_HOTEL_OPTIONS}: Hotel costs
+            - {STATE_ITINERARY}: Activity costs
             Break down costs by category.
             Suggest alternatives if over budget.
+            Return a dictionary with 'within_budget' boolean and 'total_cost' float.
             """,
             tools=[AgentTool(agent=self.check_budget_agent)],
+            output_key=STATE_BUDGET_ANALYSIS  # Store results in state
         )
 
     def _create_human_approval_tool(self) -> Agent:
         return Agent(
             name="human_approval",
             model=GEMINI_MODEL,
-            instruction="""Handle cases requiring human approval.
+            instruction=f"""Handle cases requiring human approval.
+            Use the following data from state:
+            - {STATE_BUDGET_ANALYSIS}: Budget compliance status
+            - {STATE_ITINERARY}: Proposed itinerary
             Present clear options and reasoning.
             Wait for human input before proceeding.
+            Return a dictionary with 'approved' boolean and 'reason' string.
             """,
             tools=[AgentTool(agent=self.request_human_approval_agent)],
+            output_key=STATE_APPROVAL_STATUS  # Store results in state
         )
 
     # Tool implementations
