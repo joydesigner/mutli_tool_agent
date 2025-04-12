@@ -1,12 +1,12 @@
-from google.adk.agents import Agent, LlmAgent, SequentialAgent, ParallelAgent, LoopAgent
+from google.adk.agents import LlmAgent, SequentialAgent, ParallelAgent, LoopAgent
 from google.adk.models.lite_llm import LiteLlm
-from google.adk.tools.agent_tool import AgentTool
+from google.adk.tools import Tool
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
 import requests
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import os
 import time
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 APP_NAME = "travel_planner_app"
 USER_ID = "travel_user_01"
 SESSION_ID = "travel_session_01"
-GEMINI_MODEL = "gemini-2.0-flash-exp"
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 WEATHER_API_URL = os.getenv("WEATHER_API_URL")
 MAX_RETRIES = 3
@@ -34,25 +33,20 @@ STATE_ITINERARY = "itinerary"
 STATE_BUDGET_ANALYSIS = "budget_analysis"
 STATE_APPROVAL_STATUS = "approval_status"
 
+# Model constants
+OLLAMA_MODEL = "ollama/gemma3:12b"
+GEMINI_MODEL = "gemini-2.0-flash-exp"
+
 class TravelCoordinator:
     def __init__(self):
-        # Create tool agents first
-        self.search_flights_agent = self._create_search_flights_agent()
-        self.search_hotels_agent = self._create_search_hotels_agent()
-        self.get_weather_agent = self._create_get_weather_agent()
-        self.create_itinerary_agent = self._create_create_itinerary_agent()
-        self.check_budget_agent = self._create_check_budget_agent()
-        self.request_human_approval_agent = self._create_request_human_approval_agent()
-
-        # Create specialized agents that depend on tool agents
+        # Create specialized agents with direct tools
         self.flight_finder = self._create_flight_finder()
         self.hotel_booker = self._create_hotel_booker()
-        self.weather_fetcher = self._create_weather_fetcher()
         self.itinerary_designer = self._create_itinerary_designer()
         self.budget_checker = self._create_budget_checker()
         self.human_approval = self._create_human_approval_tool()
 
-        # Create the workflow using all three agent types
+        # Create the workflow
         self.workflow = SequentialAgent(
             name="TravelWorkflow",
             sub_agents=[
@@ -62,7 +56,6 @@ class TravelCoordinator:
                     sub_agents=[
                         self.flight_finder,    # Output stored in STATE_FLIGHT_OPTIONS
                         self.hotel_booker,     # Output stored in STATE_HOTEL_OPTIONS
-                        self.weather_fetcher   # Output stored in STATE_WEATHER_FORECAST
                     ]
                 ),
                 # Phase 2: Iterative Planning
@@ -73,7 +66,7 @@ class TravelCoordinator:
                         self.budget_checker       # Output stored in STATE_BUDGET_ANALYSIS
                     ],
                     max_iterations=3,
-                    # condition=lambda state: not state.get(STATE_BUDGET_ANALYSIS, {}).get("within_budget", True)
+                    condition=lambda state: not state.get(STATE_BUDGET_ANALYSIS, {}).get("within_budget", True)
                 ),
                 # Phase 3: Final Approval
                 SequentialAgent(
@@ -98,122 +91,66 @@ class TravelCoordinator:
             session_service=self.session_service
         )
 
-    def _create_search_flights_agent(self) -> Agent:
-        return Agent(
-            name="search_flights",
-            model=GEMINI_MODEL,
-            instruction="""Search for flights based on origin, destination, and dates.
-            Return flight options in a structured format.
-            """,
-            description="Searches for available flights"
-        )
-
-    def _create_search_hotels_agent(self) -> Agent:
-        return Agent(
-            name="search_hotels",
-            model=GEMINI_MODEL,
-            instruction="""Search for hotels based on location, dates, and budget.
-            Return hotel options in a structured format.
-            """,
-            description="Searches for available hotels"
-        )
-
-    def _create_get_weather_agent(self) -> Agent:
-        return Agent(
-            name="get_weather",
-            model=GEMINI_MODEL,
-            instruction="""Fetch weather information for a given city.
-            Return weather forecast in a structured format.
-            """,
-            description="Fetches weather information"
-        )
-
-    def _create_create_itinerary_agent(self) -> Agent:
-        return Agent(
-            name="create_itinerary",
-            model=GEMINI_MODEL,
-            instruction="""Create a daily itinerary based on activities and weather.
-            Return itinerary in a structured format.
-            """,
-            description="Creates travel itinerary"
-        )
-
-    def _create_check_budget_agent(self) -> Agent:
-        return Agent(
-            name="check_budget",
-            model=GEMINI_MODEL,
-            instruction="""Check if total costs are within budget.
-            Return budget analysis in a structured format.
-            """,
-            description="Checks budget compliance"
-        )
-
-    def _create_request_human_approval_agent(self) -> Agent:
-        return Agent(
-            name="request_human_approval",
-            model=GEMINI_MODEL,
-            instruction="""Request human approval for specific decisions.
-            Return approval status in a structured format.
-            """,
-            description="Handles human approval requests"
-        )
-
-    def _create_flight_finder(self) -> Agent:
-        return Agent(
+    def _create_flight_finder(self) -> LlmAgent:
+        return LlmAgent(
             name="flight_finder",
-            model=GEMINI_MODEL,
-            instruction="""Find and compare flight options based on origin, destination, and dates.
+            model=LiteLlm(model=OLLAMA_MODEL),
+            instruction=f"""Find and compare flight options based on origin, destination, and dates.
             Consider price, duration, and layovers.
             Return flight options in a structured format.
             """,
-            tools=[AgentTool(agent=self.search_flights_agent)],
-            output_key=STATE_FLIGHT_OPTIONS  # Store results in state
+            tools=[
+                Tool(
+                    name="search_flights",
+                    func=self._search_flights,
+                    description="Search for available flights based on criteria"
+                )
+            ],
+            output_key=STATE_FLIGHT_OPTIONS
         )
 
-    def _create_hotel_booker(self) -> Agent:
-        return Agent(
+    def _create_hotel_booker(self) -> LlmAgent:
+        return LlmAgent(
             name="hotel_booker",
-            model=GEMINI_MODEL,
-            instruction="""Find and compare hotel options based on location, dates, and budget.
+            model=LiteLlm(model=OLLAMA_MODEL),
+            instruction=f"""Find and compare hotel options based on location, dates, and budget.
             Consider amenities, ratings, and location.
             Return hotel options in a structured format.
             """,
-            tools=[AgentTool(agent=self.search_hotels_agent)],
-            output_key=STATE_HOTEL_OPTIONS  # Store results in state
+            tools=[
+                Tool(
+                    name="search_hotels",
+                    func=self._search_hotels,
+                    description="Search for available hotels based on criteria"
+                )
+            ],
+            output_key=STATE_HOTEL_OPTIONS
         )
 
-    def _create_weather_fetcher(self) -> Agent:
-        return Agent(
-            name="weather_fetcher",
-            model=GEMINI_MODEL,
-            instruction="""Fetch weather information for the destination.
-            Consider current and forecasted weather.
-            Return weather information in a structured format.
-            """,
-            tools=[AgentTool(agent=self.get_weather_agent)],
-            output_key=STATE_WEATHER_FORECAST  # Store results in state
-        )
-
-    def _create_itinerary_designer(self) -> Agent:
-        return Agent(
+    def _create_itinerary_designer(self) -> LlmAgent:
+        return LlmAgent(
             name="itinerary_designer",
-            model=GEMINI_MODEL,
-            instruction=f"""Design a detailed daily itinerary based on available activities,
-            weather conditions, and user preferences.
+            model=LiteLlm(model=OLLAMA_MODEL),
+            instruction=f"""Design a detailed daily itinerary based on available activities and user preferences.
             Use the following data from state:
             - {STATE_FLIGHT_OPTIONS}: Available flights
             - {STATE_HOTEL_OPTIONS}: Available hotels
-            - {STATE_WEATHER_FORECAST}: Weather information
             Return a structured daily schedule in JSON format.
             """,
-            tools=[AgentTool(agent=self.create_itinerary_agent)],
-            output_key=STATE_ITINERARY  # Store results in state
+            tools=[
+                Tool(
+                    name="create_itinerary",
+                    func=self._create_itinerary,
+                    description="Create a detailed daily itinerary"
+                )
+            ],
+            output_key=STATE_ITINERARY
         )
 
-    def _create_budget_checker(self) -> Agent:
-        return Agent(
+    def _create_budget_checker(self) -> LlmAgent:
+        return LlmAgent(
             name="budget_checker",
-            model=GEMINI_MODEL,
+            model=LiteLlm(model=OLLAMA_MODEL),
             instruction=f"""Verify if the total cost of the trip is within budget.
             Use the following data from state:
             - {STATE_FLIGHT_OPTIONS}: Flight costs
@@ -223,14 +160,20 @@ class TravelCoordinator:
             Suggest alternatives if over budget.
             Return a dictionary with 'within_budget' boolean and 'total_cost' float.
             """,
-            tools=[AgentTool(agent=self.check_budget_agent)],
-            output_key=STATE_BUDGET_ANALYSIS  # Store results in state
+            tools=[
+                Tool(
+                    name="check_budget",
+                    func=self._check_budget,
+                    description="Verify if total costs are within budget"
+                )
+            ],
+            output_key=STATE_BUDGET_ANALYSIS
         )
 
-    def _create_human_approval_tool(self) -> Agent:
-        return Agent(
+    def _create_human_approval_tool(self) -> LlmAgent:
+        return LlmAgent(
             name="human_approval",
-            model=GEMINI_MODEL,
+            model=LiteLlm(model=OLLAMA_MODEL),
             instruction=f"""Handle cases requiring human approval.
             Use the following data from state:
             - {STATE_BUDGET_ANALYSIS}: Budget compliance status
@@ -239,126 +182,43 @@ class TravelCoordinator:
             Wait for human input before proceeding.
             Return a dictionary with 'approved' boolean and 'reason' string.
             """,
-            tools=[AgentTool(agent=self.request_human_approval_agent)],
-            output_key=STATE_APPROVAL_STATUS  # Store results in state
+            tools=[
+                Tool(
+                    name="request_human_approval",
+                    func=self._request_human_approval,
+                    description="Request human approval for budget overruns"
+                )
+            ],
+            output_key=STATE_APPROVAL_STATUS
         )
 
     # Tool implementations
-    def _search_flights(self, origin: str, destination: str, dates: Dict[str, str]) -> Dict:
-        # Implementation would call actual flight API
-        return {
-            "status": "success",
-            "flights": [
-                {
-                    "airline": "Sample Airline",
-                    "price": 500,
-                    "duration": "12h",
-                    "stops": 1
-                }
-            ]
-        }
+    def _search_flights(self, origin: str, destination: str, dates: Dict[str, str]) -> Dict[str, Any]:
+        # Implementation for flight search
+        pass
 
-    def _search_hotels(self, location: str, dates: Dict[str, str], budget: float) -> Dict:
-        # Implementation would call actual hotel API
-        return {
-            "status": "success",
-            "hotels": [
-                {
-                    "name": "Sample Hotel",
-                    "price": 200,
-                    "rating": 4.5,
-                    "amenities": ["pool", "gym"]
-                }
-            ]
-        }
+    def _search_hotels(self, location: str, dates: Dict[str, str], budget: float) -> Dict[str, Any]:
+        # Implementation for hotel search
+        pass
 
-    def _get_weather(self, city: str) -> Dict:
-        api_key = WEATHER_API_KEY
-        base_url = WEATHER_API_URL
-        params = {
-            "key": api_key,
-            "q": city,
-            "days": 7,
-            "aqi": "no"
-        }
+    def _create_itinerary(self, flight_options: Dict[str, Any], hotel_options: Dict[str, Any], 
+                         preferences: Dict[str, Any]) -> Dict[str, Any]:
+        # Implementation for itinerary creation
+        pass
 
-        try:
-            response = requests.get(base_url, params=params)
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "status": "success",
-                    "forecast": data["forecast"]["forecastday"]
-                }
-            return {"status": "error", "message": "Failed to fetch weather data"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    def _check_budget(self, flight_cost: float, hotel_cost: float, 
+                     activity_costs: List[float], total_budget: float) -> Dict[str, Any]:
+        # Implementation for budget checking
+        pass
 
-    def _create_itinerary(self, activities: List[Dict], weather: Dict) -> Dict:
-        # Implementation would create detailed daily itinerary
-        return {
-            "status": "success",
-            "itinerary": {
-                "day_1": {
-                    "activities": [],
-                    "weather": "sunny"
-                }
-            }
-        }
+    def _request_human_approval(self, budget_analysis: Dict[str, Any], 
+                              itinerary: Dict[str, Any]) -> Dict[str, Any]:
+        # Implementation for human approval
+        pass
 
-    def _check_budget(self, costs: Dict[str, float], budget: float) -> Dict:
-        total = sum(costs.values())
-        return {
-            "status": "success",
-            "within_budget": total <= budget,
-            "total_cost": total,
-            "breakdown": costs
-        }
-
-    def _request_human_approval(self, reason: str, options: List[Dict]) -> Dict:
-        return {
-            "status": "pending",
-            "reason": reason,
-            "options": options,
-            "requires_human_approval": True
-        }
-
-    def plan_trip(self, request: Dict) -> Dict:
-        """
-        Main orchestration function that coordinates all agents to plan a trip.
-        """
-        # Convert request to ADK content format
-        content = types.Content(
-            role='user',
-            parts=[types.Part(text=json.dumps(request))]
-        )
-
-        # Execute the workflow with retry logic
-        for attempt in range(MAX_RETRIES):
-            try:
-                events = self.runner.run(
-                    user_id=USER_ID,
-                    session_id=SESSION_ID,
-                    new_message=content
-                )
-
-                # Process events and return final response
-                for event in events:
-                    if event.is_final_response():
-                        return json.loads(event.content.parts[0].text)
-
-                return {"status": "error", "message": "No final response received"}
-
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed: {str(e)}")
-                if attempt < MAX_RETRIES - 1:
-                    logger.info(f"Retrying in {RETRY_DELAY} seconds...")
-                    time.sleep(RETRY_DELAY)
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Failed after {MAX_RETRIES} attempts: {str(e)}"
-                    }
+    def plan_trip(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the travel planning workflow."""
+        return self.workflow.run(request)
 
 # Create the main coordinator instance
 travel_coordinator = TravelCoordinator()
@@ -405,34 +265,21 @@ def get_weather(city: str) -> object:
     params = {
         "key": api_key,
         "q": city,
-        "aqi": "no",
+        "days": 7,
+        "aqi": "no"
     }
 
     try:
         response = requests.get(base_url, params=params)
-
-        # Check if the response is successful
-        if response.status_code != 200:
-            return f"Error: Unable to fetch data from the weather service. Status code: {response.status_code}"
-
-        data = response.json()
-        if "error" in data:
-            return f"Error: {data['error']['message']}"
-        else:
-            location = data["location"]["name"]
-            region = data["location"]["region"]
-            country = data["location"]["country"]
-            temp_c = data["current"]["temp_c"]
-            condition = data["current"]["condition"]["text"]
+        if response.status_code == 200:
+            data = response.json()
             return {
                 "status": "success",
-                "report": f"The current temperature in {location}, {region}, {country} is {temp_c}°C with {condition}.",
+                "forecast": data["forecast"]["forecastday"]
             }
+        return {"status": "error", "message": "Failed to fetch weather data"}
     except Exception as e:
-        return {
-            "status": "error",
-            "report": f"An error occurred: {str(e)}",
-        }
+        return {"status": "error", "message": str(e)}
 
 # Function to get the current time
 def get_current_time(city: str) -> object:
