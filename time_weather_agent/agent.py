@@ -1,15 +1,19 @@
 from google.adk.agents import Agent, LlmAgent
 from google.adk.models.lite_llm import LiteLlm
 import requests
+import os
 
+
+WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
+WEATHER_API_URL = os.environ.get("WEATHER_API_URL")
 # Function to get the city weather
 def get_weather(city: str) -> object:
     """
     Function to get the weather information for a given city.
     """
     # API call to a weather service would go here
-    api_key = "9a73228d8b9a4cb3aee114043251104"
-    base_url = "http://api.weatherapi.com/v1/current.json"
+    api_key = WEATHER_API_KEY
+    base_url = WEATHER_API_URL
     params = {
         "key": api_key,
         "q": city,
@@ -48,8 +52,8 @@ def get_current_time(city: str) -> object:
     Function to get the current time for a given city.
     """
     # API call to a time service would go here
-    api_key = "9a73228d8b9a4cb3aee114043251104"
-    base_url = "http://api.weatherapi.com/v1/current.json"
+    api_key = WEATHER_API_KEY
+    base_url = WEATHER_API_URL
 
     try:
         response = requests.get(f"{base_url}?key={api_key}&q={city}")
